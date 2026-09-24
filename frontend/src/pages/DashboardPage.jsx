@@ -4,11 +4,11 @@ import { GitCompare, Search, User, Mail, Star, Code, Terminal, ArrowUpRight, Tra
 
 export default function DashboardPage() {
   const [user, setUser] = useState(null);
-  const [bookmarks, setBookmarks] = useState([]);
+  const [favRepos, setFavRepos] = useState([]);
+  const [favUsers, setFavUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  // Your deployed Render backend URL
   const API_URL = import.meta.env.VITE_API_URL || 'https://devhub-backend-lpen.onrender.com';
 
   useEffect(() => {
@@ -18,11 +18,9 @@ export default function DashboardPage() {
       return;
     }
 
-    // Load saved user info
-    const savedUser = JSON.parse(localStorage.getItem('user') || localStorage.getItem('devhub_user'));
+    const savedUser = JSON.parse(localStorage.getItem('user') || localStorage.getItem('devhub_user') || '{}');
     if (savedUser) setUser(savedUser);
 
-    // Fetch bookmarks from MongoDB backend
     const fetchBookmarks = async () => {
       try {
         const response = await fetch(`${API_URL}/api/bookmarks`, {
@@ -33,11 +31,32 @@ export default function DashboardPage() {
         });
         const data = await response.json();
         
-        // Debug log to check incoming records from MongoDB Atlas
-        console.log("Raw Bookmarks from MongoDB:", data);
-
         if (response.ok && Array.isArray(data)) {
-          setBookmarks(data);
+          // Map database bookmarks to match frontend properties (title -> name)
+          const repos = data
+            .filter(b => {
+              const t = (b.type || '').toLowerCase();
+              return t.includes('repo');
+            })
+            .map(r => ({
+              ...r,
+              name: r.title || r.name
+            }));
+
+          const users = data
+            .filter(b => {
+              const t = (b.type || '').toLowerCase();
+              return t.includes('user') || t.includes('developer');
+            })
+            .map(u => ({
+              ...u,
+              login: u.title || u.login,
+              avatar_url: u.description && u.description.startsWith('http') ? u.description : null,
+              html_url: u.url
+            }));
+
+          setFavRepos(repos);
+          setFavUsers(users);
         }
       } catch (err) {
         console.error('Failed to fetch bookmarks from database:', err);
@@ -49,8 +68,7 @@ export default function DashboardPage() {
     fetchBookmarks();
   }, [navigate, API_URL]);
 
-  // Remove bookmark from MongoDB and update UI state
-  const removeBookmark = async (itemId) => {
+  const removeFavorite = async (itemId) => {
     const token = localStorage.getItem('token') || localStorage.getItem('devhub_token');
     try {
       const response = await fetch(`${API_URL}/api/bookmarks/${itemId}`, {
@@ -61,26 +79,30 @@ export default function DashboardPage() {
       });
 
       if (response.ok) {
-        setBookmarks(prev => prev.filter(b => b.itemId !== String(itemId)));
-      } else {
-        const data = await response.json();
-        alert(data.error || 'Failed to remove bookmark.');
+        setFavRepos(prev => prev.filter(repo => repo.itemId !== String(itemId) && repo.id !== itemId));
       }
     } catch (err) {
-      console.error('Error deleting bookmark:', err);
+      console.error('Error deleting repository bookmark:', err);
     }
   };
 
-  // Bulletproof filters: Accurately categorizes repositories and developer profiles
-  const favUsers = bookmarks.filter(b => {
-    const t = (b.type || '').toLowerCase();
-    return t.includes('user') || t.includes('developer') || (b.description && b.description.startsWith('http'));
-  });
+  const removeFavUser = async (itemId) => {
+    const token = localStorage.getItem('token') || localStorage.getItem('devhub_token');
+    try {
+      const response = await fetch(`${API_URL}/api/bookmarks/${itemId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
 
-  const favRepos = bookmarks.filter(b => {
-    const t = (b.type || '').toLowerCase();
-    return t.includes('repo') || (b.url && !b.description?.startsWith('http'));
-  });
+      if (response.ok) {
+        setFavUsers(prev => prev.filter(u => u.itemId !== String(itemId) && u.id !== itemId));
+      }
+    } catch (err) {
+      console.error('Error deleting user bookmark:', err);
+    }
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-10 w-full">
@@ -96,7 +118,7 @@ export default function DashboardPage() {
             Welcome back, <span className="text-accent">{user?.name || 'Developer'}</span>!
           </h1>
           <p className="text-sm text-gray-400 mt-1">
-            Here is your developer activity overview and saved bookmarks synced with MongoDB.
+            Here is your developer activity overview and saved bookmarks.
           </p>
         </div>
       </div>
@@ -124,14 +146,14 @@ export default function DashboardPage() {
               </div>
               <div className="flex items-center gap-3 text-gray-300">
                 <Terminal className="w-4 h-4 text-gray-500 shrink-0" />
-                <span>DevHub v1.0.0 (Cloud Connected)</span>
+                <span>DevHub v1.0.0</span>
               </div>
             </div>
           </div>
 
           <div className="mt-8 pt-4 border-t border-gray-800/60 flex items-center justify-between text-xs text-gray-500">
             <span>Status: Online</span>
-            <span className="text-[#00ff0f]">Database Live</span>
+            <span className="text-[#00ff0f]">Connected</span>
           </div>
         </div>
 
@@ -182,22 +204,24 @@ export default function DashboardPage() {
         </h3>
 
         {loading ? (
-          <div className="text-center py-6 text-gray-500 text-xs">Loading bookmarks from database...</div>
+          <div className="text-center py-6 text-gray-500 text-xs">Loading repositories...</div>
         ) : favRepos.length === 0 ? (
           <div className="text-center py-8 text-gray-500 text-xs italic">
-            No saved repositories yet. Search for a repository and bookmark it to save it here!
+            No saved repositories yet. Search for a repository and click 'Favorite' to save it here!
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {favRepos.map((repo) => (
-              <div key={repo.itemId} className="bg-[#161616] border border-gray-800/60 rounded-xl p-4 flex flex-col justify-between">
+              <div key={repo.itemId || repo.id} className="bg-[#161616] border border-gray-800/60 rounded-xl p-4 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-2">
-                    <span className="font-bold text-white text-sm truncate">{repo.title}</span>
+                    <Link to={`/repository/${repo.owner}/${repo.name}`} className="font-bold text-white text-sm hover:text-accent truncate">
+                      {repo.name}
+                    </Link>
                     <button 
-                      onClick={() => removeBookmark(repo.itemId)}
+                      onClick={() => removeFavorite(repo.itemId || repo.id)}
                       className="text-gray-500 hover:text-red-400 transition p-1"
-                      title="Remove Bookmark"
+                      title="Remove Favorite"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -226,7 +250,7 @@ export default function DashboardPage() {
         </h3>
 
         {loading ? (
-          <div className="text-center py-6 text-gray-500 text-xs">Loading bookmarks from database...</div>
+          <div className="text-center py-6 text-gray-500 text-xs">Loading developers...</div>
         ) : favUsers.length === 0 ? (
           <div className="text-center py-8 text-gray-500 text-xs italic">
             No saved developers yet. Search for a developer and click the star icon to save them here!
@@ -234,28 +258,30 @@ export default function DashboardPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {favUsers.map((dev) => (
-              <div key={dev.itemId} className="bg-[#161616] border border-gray-800/60 rounded-xl p-4 flex items-center justify-between">
+              <div key={dev.itemId || dev.id} className="bg-[#161616] border border-gray-800/60 rounded-xl p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <img 
-                    src={dev.description && dev.description.startsWith('http') ? dev.description : "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"} 
-                    alt={dev.title} 
-                    className="w-10 h-10 rounded-xl border border-gray-700 object-cover" 
-                  />
+                  {dev.avatar_url ? (
+                    <img src={dev.avatar_url} alt={dev.login} className="w-10 h-10 rounded-xl border border-gray-700 object-cover" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-xl border border-gray-700 bg-gray-800 flex items-center justify-center text-white font-bold">
+                      {dev.login ? dev.login.charAt(0).toUpperCase() : 'U'}
+                    </div>
+                  )}
                   <div>
-                    <a href={dev.url} target="_blank" rel="noreferrer" className="font-bold text-white text-sm hover:text-accent transition truncate max-w-[120px] block">
-                      {dev.title}
+                    <a href={dev.html_url || dev.url} target="_blank" rel="noreferrer" className="font-bold text-white text-sm hover:text-accent transition truncate max-w-[120px] block">
+                      {dev.login}
                     </a>
                     <p className="text-[11px] text-gray-400 capitalize">Developer</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <a href={dev.url} target="_blank" rel="noreferrer" className="p-2 bg-[#212121] border border-gray-700/60 text-gray-300 hover:text-accent rounded-lg transition" title="Open Profile">
+                  <a href={dev.html_url || dev.url} target="_blank" rel="noreferrer" className="p-2 bg-[#212121] border border-gray-700/60 text-gray-300 hover:text-accent rounded-lg transition" title="Open Profile">
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
                   <button 
-                    onClick={() => removeBookmark(dev.itemId)}
+                    onClick={() => removeFavUser(dev.itemId || dev.id)}
                     className="p-2 bg-[#212121] border border-gray-700/60 text-gray-500 hover:text-red-400 rounded-lg transition"
-                    title="Remove Bookmark"
+                    title="Remove Favorite"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -274,12 +300,12 @@ export default function DashboardPage() {
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-[#161616] border border-gray-800/60 rounded-xl p-4">
-            <p className="text-xs text-gray-400 mb-1">Total Saved Bookmarks</p>
-            <p className="text-2xl font-bold text-white">{bookmarks.length}</p>
+            <p className="text-xs text-gray-400 mb-1">Saved Bookmarks</p>
+            <p className="text-2xl font-bold text-white">{favRepos.length + favUsers.length}</p>
           </div>
           <div className="bg-[#161616] border border-gray-800/60 rounded-xl p-4">
-            <p className="text-xs text-gray-400 mb-1">Database Sync</p>
-            <p className="text-2xl font-bold text-[#00ff0f]">Active</p>
+            <p className="text-xs text-gray-400 mb-1">Saved Comparisons</p>
+            <p className="text-2xl font-bold text-white">0</p>
           </div>
           <div className="bg-[#161616] border border-gray-800/60 rounded-xl p-4">
             <p className="text-xs text-gray-400 mb-1">API Status</p>
