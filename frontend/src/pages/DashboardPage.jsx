@@ -32,6 +32,10 @@ export default function DashboardPage() {
           }
         });
         const data = await response.json();
+        
+        // Debug log to check incoming records from MongoDB Atlas
+        console.log("Raw Bookmarks from MongoDB:", data);
+
         if (response.ok && Array.isArray(data)) {
           setBookmarks(data);
         }
@@ -67,15 +71,15 @@ export default function DashboardPage() {
     }
   };
 
-  // Flexible case-insensitive filters to reliably catch repositories and users/developers
+  // Bulletproof filters: Accurately categorizes repositories and developer profiles
   const favUsers = bookmarks.filter(b => {
     const t = (b.type || '').toLowerCase();
-    return t.includes('user') || t.includes('developer');
+    return t.includes('user') || t.includes('developer') || (b.description && b.description.startsWith('http'));
   });
 
   const favRepos = bookmarks.filter(b => {
     const t = (b.type || '').toLowerCase();
-    return t.includes('repo');
+    return t.includes('repo') || (b.url && !b.description?.startsWith('http'));
   });
 
   return (
