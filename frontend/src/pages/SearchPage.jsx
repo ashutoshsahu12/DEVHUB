@@ -32,7 +32,6 @@ export default function SearchPage() {
         });
         const data = await res.json();
         if (res.ok && Array.isArray(data)) {
-          // Store bookmarked itemIds in a Set for instant lookup
           const ids = new Set(data.map(b => String(b.itemId)));
           setBookmarkedItemIds(ids);
         }
@@ -67,8 +66,8 @@ export default function SearchPage() {
     }
   };
 
-  // Handle saving/removing bookmarks via MongoDB backend
-  const handleToggleBookmark = async (user, e) => {
+  // Handle saving/removing bookmarks via MongoDB backend (Supports both Repos & Users)
+  const handleToggleBookmark = async (item, e) => {
     e.preventDefault();
     const token = localStorage.getItem('token') || localStorage.getItem('devhub_token');
     
@@ -78,8 +77,9 @@ export default function SearchPage() {
       return;
     }
 
-    const itemIdStr = String(user.id);
+    const itemIdStr = String(item.id);
     const isFav = bookmarkedItemIds.has(itemIdStr);
+    const isRepo = searchType === 'repositories';
 
     try {
       if (isFav) {
@@ -97,21 +97,31 @@ export default function SearchPage() {
           });
         }
       } else {
-        // POST new bookmark to backend matching your schema
+        // Build payload matching your backend schema for Repositories or Users
+        const payload = isRepo ? {
+          type: 'repo',
+          itemId: itemIdStr,
+          title: item.name,
+          owner: item.owner?.login || 'Unknown',
+          description: item.description || 'No description provided.',
+          url: item.html_url
+        } : {
+          type: 'user',
+          itemId: itemIdStr,
+          title: item.login,
+          owner: item.login,
+          description: item.avatar_url, // Stores avatar link so dashboard renders it correctly
+          url: item.html_url
+        };
+
+        // POST new bookmark to backend
         const res = await fetch(`${API_URL}/api/bookmarks`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
           },
-          body: JSON.stringify({
-            type: 'user',
-            itemId: itemIdStr,
-            title: user.login,
-            owner: user.login,
-            description: user.type || 'Developer',
-            url: user.html_url
-          })
+          body: JSON.stringify(payload)
         });
 
         if (res.ok) {
@@ -209,49 +219,65 @@ export default function SearchPage() {
       {results.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 max-w-6xl mx-auto">
           {searchType === 'repositories' ? (
-            results.map((repo) => (
-              <div key={repo.id} className="bg-[#1c1c1c] border border-gray-800/80 rounded-2xl p-6 shadow-xl flex flex-col justify-between hover:border-gray-700 transition">
-                <div>
-                  <div className="flex items-start justify-between gap-2 mb-3">
-                    <h3 className="text-base font-bold text-white truncate">
-                      <Link to={`/repository/${repo.owner.login}/${repo.name}`} className="hover:text-accent transition flex items-center gap-1.5">
-                        {repo.name}
-                      </Link>
-                    </h3>
-                  </div>
-                  <p className="text-xs text-gray-400 line-clamp-2 mb-4">
-                    {repo.description || 'No description provided.'}
-                  </p>
-                </div>
-                <div>
-                  <div className="flex items-center justify-between pt-4 border-t border-gray-800/60">
-                    <div className="flex items-center gap-3 text-xs text-gray-400">
-                      <span className="flex items-center gap-1"><Star className="w-3.5 h-3.5 text-yellow-400" /> {repo.stargazers_count.toLocaleString()}</span>
-                      <span className="flex items-center gap-1"><GitFork className="w-3.5 h-3.5 text-[#00ff0f]" /> {repo.forks_count.toLocaleString()}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {repo.language && <span className="text-xs text-accent font-medium">{repo.language}</span>}
-                      <Link
-                        to={`/repository/${repo.owner.login}/${repo.name}`}
-                        className="p-2.5 bg-[#262626] border border-gray-700/60 text-gray-300 hover:bg-[#00f0ff] hover:border-[#00f0ff] hover:text-black rounded-xl transition"
-                        title="View Repository Details"
+            results.map((repo) => {
+              const isFav = bookmarkedItemIds.has(String(repo.id));
+
+              return (
+                <div key={repo.id} className="bg-[#1c1c1c] border border-gray-800/80 rounded-2xl p-6 shadow-xl flex flex-col justify-between hover:border-gray-700 transition">
+                  <div>
+                    <div className="flex items-start justify-between gap-2 mb-3">
+                      <h3 className="text-base font-bold text-white truncate">
+                        <Link to={`/repository/${repo.owner.login}/${repo.name}`} className="hover:text-accent transition flex items-center gap-1.5">
+                          {repo.name}
+                        </Link>
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={(e) => handleToggleBookmark(repo, e)}
+                        className={`p-2 rounded-xl border transition ${
+                          isFav 
+                            ? 'bg-[#1c1c1c] border-[#009ca6] text-[#00f0ff]' 
+                            : 'bg-[#1c1c1c] border-gray-700 text-gray-400 hover:text-accent hover:border-accent'
+                        }`}
+                        title={isFav ? "Remove Repository Bookmark" : "Save Repository Bookmark"}
                       >
-                        <ArrowRight className="w-4 h-4" />
-                      </Link>
-                      <a
-                        href={repo.html_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-2.5 bg-[#262626] border border-gray-700/60 text-gray-300 hover:bg-[#00f0ff] hover:border-[#00f0ff] hover:text-black rounded-xl transition"
-                        title="Open on GitHub in New Tab"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                      </a>
+                        <Star className={`w-4 h-4 ${isFav ? 'fill-[#00f0ff]' : ''}`} />
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-400 line-clamp-2 mb-4">
+                      {repo.description || 'No description provided.'}
+                    </p>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between pt-4 border-t border-gray-800/60">
+                      <div className="flex items-center gap-3 text-xs text-gray-400">
+                        <span className="flex items-center gap-1"><Star className="w-3.5 h-3.5 text-yellow-400" /> {repo.stargazers_count.toLocaleString()}</span>
+                        <span className="flex items-center gap-1"><GitFork className="w-3.5 h-3.5 text-[#00ff0f]" /> {repo.forks_count.toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {repo.language && <span className="text-xs text-accent font-medium">{repo.language}</span>}
+                        <Link
+                          to={`/repository/${repo.owner.login}/${repo.name}`}
+                          className="p-2.5 bg-[#262626] border border-gray-700/60 text-gray-300 hover:bg-[#00f0ff] hover:border-[#00f0ff] hover:text-black rounded-xl transition"
+                          title="View Repository Details"
+                        >
+                          <ArrowRight className="w-4 h-4" />
+                        </Link>
+                        <a
+                          href={repo.html_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-2.5 bg-[#262626] border border-gray-700/60 text-gray-300 hover:bg-[#00f0ff] hover:border-[#00f0ff] hover:text-black rounded-xl transition"
+                          title="Open on GitHub in New Tab"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             results.map((user) => {
               const isFav = bookmarkedItemIds.has(String(user.id));
@@ -272,6 +298,7 @@ export default function SearchPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <button
+                      type="button"
                       onClick={(e) => handleToggleBookmark(user, e)}
                       className={`p-2.5 rounded-xl border transition duration-200 ${
                         isFav 
