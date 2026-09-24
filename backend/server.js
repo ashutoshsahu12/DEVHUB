@@ -190,5 +190,5 @@ app.delete('/api/bookmarks/:itemId', verifyToken, async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`DevHub MongoDB Backend running on http://localhost:${PORT}`);
+  console.log(`DevHub MongoDB Backend running on https://devhub-backend-lpen.onrender.com:${PORT}`);
 });
