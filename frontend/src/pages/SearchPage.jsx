@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, GitBranch, Star, GitFork, User, ExternalLink, ArrowRight, Code, Zap } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { fetchWithCache, getRateLimitStatus } from '../utils/githubApi';
@@ -10,8 +10,39 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [searched, setSearched] = useState(false);
-  const navigate = useNavigate(); // <--- Initialized here
+  
+  // State to track bookmarked item IDs fetched from MongoDB
+  const [bookmarkedItemIds, setBookmarkedItemIds] = useState(new Set());
+
+  const navigate = useNavigate();
   const rateStatus = getRateLimitStatus();
+  
+  // Your deployed Render backend URL
+  const API_URL = import.meta.env.VITE_API_URL || 'https://devhub-backend-lpen.onrender.com';
+
+  // Fetch user's saved bookmarks from MongoDB on component load
+  useEffect(() => {
+    const fetchUserBookmarks = async () => {
+      const token = localStorage.getItem('token') || localStorage.getItem('devhub_token');
+      if (!token) return;
+
+      try {
+        const res = await fetch(`${API_URL}/api/bookmarks`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await res.json();
+        if (res.ok && Array.isArray(data)) {
+          // Store bookmarked itemIds in a Set for instant lookup
+          const ids = new Set(data.map(b => String(b.itemId)));
+          setBookmarkedItemIds(ids);
+        }
+      } catch (err) {
+        console.error('Failed to load user bookmarks:', err);
+      }
+    };
+
+    fetchUserBookmarks();
+  }, [API_URL]);
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -33,6 +64,69 @@ export default function SearchPage() {
       setResults([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Handle saving/removing bookmarks via MongoDB backend
+  const handleToggleBookmark = async (user, e) => {
+    e.preventDefault();
+    const token = localStorage.getItem('token') || localStorage.getItem('devhub_token');
+    
+    // Redirect to login if user is not authenticated
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+
+    const itemIdStr = String(user.id);
+    const isFav = bookmarkedItemIds.has(itemIdStr);
+
+    try {
+      if (isFav) {
+        // DELETE bookmark from backend
+        const res = await fetch(`${API_URL}/api/bookmarks/${itemIdStr}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+          setBookmarkedItemIds(prev => {
+            const next = new Set(prev);
+            next.delete(itemIdStr);
+            return next;
+          });
+        }
+      } else {
+        // POST new bookmark to backend matching your schema
+        const res = await fetch(`${API_URL}/api/bookmarks`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            type: 'user',
+            itemId: itemIdStr,
+            title: user.login,
+            owner: user.login,
+            description: user.type || 'Developer',
+            url: user.html_url
+          })
+        });
+
+        if (res.ok) {
+          setBookmarkedItemIds(prev => {
+            const next = new Set(prev);
+            next.add(itemIdStr);
+            return next;
+          });
+        } else {
+          const data = await res.json();
+          alert(data.error || 'Failed to save bookmark.');
+        }
+      }
+    } catch (err) {
+      console.error('Error toggling bookmark:', err);
     }
   };
 
@@ -160,23 +254,7 @@ export default function SearchPage() {
             ))
           ) : (
             results.map((user) => {
-              const token = localStorage.getItem('devhub_token');
-              const favorites = JSON.parse(localStorage.getItem('devhub_fav_users')) || [];
-              const isFav = favorites.some(fav => fav.id === user.id);
-
-              const toggleFavUser = (e) => {
-                e.preventDefault();
-                
-                // Prompt / redirect to login if not authenticated
-                if (!token) {
-                  navigate('/login');
-                  return;
-                }
-
-                let updated = isFav ? favorites.filter(fav => fav.id !== user.id) : [...favorites, user];
-                localStorage.setItem('devhub_fav_users', JSON.stringify(updated));
-                setResults([...results]);
-              };
+              const isFav = bookmarkedItemIds.has(String(user.id));
 
               return (
                 <div key={user.id} className="bg-[#1c1c1c] border border-gray-800/80 rounded-2xl p-6 shadow-xl flex items-center justify-between hover:border-gray-700 transition">
@@ -194,13 +272,13 @@ export default function SearchPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={toggleFavUser}
+                      onClick={(e) => handleToggleBookmark(user, e)}
                       className={`p-2.5 rounded-xl border transition duration-200 ${
                         isFav 
                           ? 'bg-[#1c1c1c] border-[#009ca6] text-[#00f0ff]' 
                           : 'bg-[#1c1c1c] border-[#009ca6] text-gray-400 hover:bg-[#00f0ff] hover:border-[#00f0ff] hover:text-black'
                       }`}
-                      title="Save Favorite Developer"
+                      title={isFav ? "Remove Bookmark" : "Save Favorite Developer"}
                     >
                       <Star className={`w-4 h-4 ${isFav ? 'fill-[#00f0ff]' : ''}`} />
                     </button>
