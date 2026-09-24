@@ -67,9 +67,16 @@ export default function DashboardPage() {
     }
   };
 
-  // Separate bookmarks into developers/users and repositories based on schema type
-  const favUsers = bookmarks.filter(b => b.type === 'user' || b.type === 'developer');
-  const favRepos = bookmarks.filter(b => b.type === 'repo' || b.type === 'repository');
+  // Flexible case-insensitive filters to reliably catch repositories and users/developers
+  const favUsers = bookmarks.filter(b => {
+    const t = (b.type || '').toLowerCase();
+    return t.includes('user') || t.includes('developer');
+  });
+
+  const favRepos = bookmarks.filter(b => {
+    const t = (b.type || '').toLowerCase();
+    return t.includes('repo');
+  });
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-10 w-full">
