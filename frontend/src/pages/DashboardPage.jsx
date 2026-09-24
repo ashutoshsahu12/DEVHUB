@@ -225,16 +225,14 @@ export default function DashboardPage() {
             {favUsers.map((dev) => (
               <div key={dev.itemId} className="bg-[#161616] border border-gray-800/60 rounded-xl p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <img 
-                    src={dev.description && dev.description.startsWith('http') ? dev.description : "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"} 
-                    alt={dev.title} 
-                    className="w-10 h-10 rounded-xl border border-gray-700 object-cover" 
-                  />
+                  <div className="w-10 h-10 rounded-xl border border-gray-700 bg-gray-800 flex items-center justify-center text-white font-bold">
+                    {dev.title ? dev.title.charAt(0).toUpperCase() : 'U'}
+                  </div>
                   <div>
                     <a href={dev.url} target="_blank" rel="noreferrer" className="font-bold text-white text-sm hover:text-accent transition truncate max-w-[120px] block">
                       {dev.title}
                     </a>
-                    <p className="text-[11px] text-gray-400 capitalize">Developer</p>
+                    <p className="text-[11px] text-gray-400 capitalize">{dev.description || 'Developer'}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

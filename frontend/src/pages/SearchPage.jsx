@@ -1,281 +1,302 @@
-import React, { useEffect, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { GitCompare, Search, User, Mail, Star, Code, Terminal, ArrowUpRight, Trash2, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, GitBranch, Star, GitFork, User, ExternalLink, ArrowRight, Code, Zap } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { fetchWithCache, getRateLimitStatus } from '../utils/githubApi';
 
-export default function DashboardPage() {
-  const [user, setUser] = useState(null);
-  const [bookmarks, setBookmarks] = useState([]);
-  const [loading, setLoading] = useState(true);
+export default function SearchPage() {
+  const [searchType, setSearchType] = useState('repositories');
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [searched, setSearched] = useState(false);
+  
+  // State to track bookmarked item IDs fetched from MongoDB
+  const [bookmarkedItemIds, setBookmarkedItemIds] = useState(new Set());
+
   const navigate = useNavigate();
-
+  const rateStatus = getRateLimitStatus();
+  
   // Your deployed Render backend URL
   const API_URL = import.meta.env.VITE_API_URL || 'https://devhub-backend-lpen.onrender.com';
 
+  // Fetch user's saved bookmarks from MongoDB on component load
   useEffect(() => {
+    const fetchUserBookmarks = async () => {
+      const token = localStorage.getItem('token') || localStorage.getItem('devhub_token');
+      if (!token) return;
+
+      try {
+        const res = await fetch(`${API_URL}/api/bookmarks`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await res.json();
+        if (res.ok && Array.isArray(data)) {
+          // Store bookmarked itemIds in a Set for instant lookup
+          const ids = new Set(data.map(b => String(b.itemId)));
+          setBookmarkedItemIds(ids);
+        }
+      } catch (err) {
+        console.error('Failed to load user bookmarks:', err);
+      }
+    };
+
+    fetchUserBookmarks();
+  }, [API_URL]);
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (!query.trim()) return;
+
+    setLoading(true);
+    setError('');
+    setSearched(true);
+
+    try {
+      const endpoint = searchType === 'repositories'
+        ? `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&per_page=6`
+        : `https://api.github.com/search/users?q=${encodeURIComponent(query)}&per_page=6`;
+
+      const result = await fetchWithCache(endpoint);
+      setResults(result.data.items || []);
+    } catch (err) {
+      setError(err.message || 'Something went wrong while searching.');
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle saving/removing bookmarks via MongoDB backend
+  const handleToggleBookmark = async (user, e) => {
+    e.preventDefault();
     const token = localStorage.getItem('token') || localStorage.getItem('devhub_token');
+    
+    // Redirect to login if user is not authenticated
     if (!token) {
       navigate('/login');
       return;
     }
 
-    // Load saved user info
-    const savedUser = JSON.parse(localStorage.getItem('user') || localStorage.getItem('devhub_user'));
-    if (savedUser) setUser(savedUser);
+    const itemIdStr = String(user.id);
+    const isFav = bookmarkedItemIds.has(itemIdStr);
 
-    // Fetch bookmarks from MongoDB backend
-    const fetchBookmarks = async () => {
-      try {
-        const response = await fetch(`${API_URL}/api/bookmarks`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        const data = await response.json();
-        if (response.ok && Array.isArray(data)) {
-          setBookmarks(data);
-        }
-      } catch (err) {
-        console.error('Failed to fetch bookmarks from database:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchBookmarks();
-  }, [navigate, API_URL]);
-
-  // Remove bookmark from MongoDB and update UI state
-  const removeBookmark = async (itemId) => {
-    const token = localStorage.getItem('token') || localStorage.getItem('devhub_token');
     try {
-      const response = await fetch(`${API_URL}/api/bookmarks/${itemId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      if (isFav) {
+        // DELETE bookmark from backend
+        const res = await fetch(`${API_URL}/api/bookmarks/${itemIdStr}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
 
-      if (response.ok) {
-        setBookmarks(prev => prev.filter(b => b.itemId !== String(itemId)));
+        if (res.ok) {
+          setBookmarkedItemIds(prev => {
+            const next = new Set(prev);
+            next.delete(itemIdStr);
+            return next;
+          });
+        }
       } else {
-        const data = await response.json();
-        alert(data.error || 'Failed to remove bookmark.');
+        // POST new bookmark to backend matching your schema
+        const res = await fetch(`${API_URL}/api/bookmarks`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            type: 'user',
+            itemId: itemIdStr,
+            title: user.login,
+            owner: user.login,
+            description: user.type || 'Developer',
+            url: user.html_url
+          })
+        });
+
+        if (res.ok) {
+          setBookmarkedItemIds(prev => {
+            const next = new Set(prev);
+            next.add(itemIdStr);
+            return next;
+          });
+        } else {
+          const data = await res.json();
+          alert(data.error || 'Failed to save bookmark.');
+        }
       }
     } catch (err) {
-      console.error('Error deleting bookmark:', err);
+      console.error('Error toggling bookmark:', err);
     }
   };
-
-  // Separate bookmarks into developers/users and repositories based on schema type
-  const favUsers = bookmarks.filter(b => b.type === 'user' || b.type === 'developer');
-  const favRepos = bookmarks.filter(b => b.type === 'repo' || b.type === 'repository');
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-10 w-full">
       
-      {/* Dashboard Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 pb-6 border-b border-gray-800/80">
-        <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#212121] border border-gray-800 text-xs font-medium text-gray-300 mb-2">
-            <span className="w-2 h-2 rounded-full bg-[#00ff0f] animate-pulse"></span>
-            Session Active
-          </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">
-            Welcome back, <span className="text-accent">{user?.name || 'Developer'}</span>!
-          </h1>
-          <p className="text-sm text-gray-400 mt-1">
-            Here is your developer activity overview and saved bookmarks synced with MongoDB.
-          </p>
+      {/* Hero Badge & Header */}
+      <div className="text-center max-w-2xl mx-auto mb-10">
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#212121] border border-gray-800 text-xs font-medium text-gray-300 mb-4">
+          <Zap className="w-3.5 h-3.5 text-accent" />
+          <span>API Quota: <strong className="text-white">{rateStatus.remaining}/60</strong> remaining</span>
         </div>
+        <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight text-white mb-3">
+          Explore GitHub <span className="text-accent">{searchType === 'repositories' ? 'Repositories' : 'Developers'}</span>
+        </h1>
+        <p className="text-gray-400 text-sm md:text-base">
+          Search live open-source codebases or creator profiles with instant local caching.
+        </p>
       </div>
 
-      {/* Main Grid Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+      {/* Search Bar & Toggle Box */}
+      <div className="bg-[#1c1c1c] border border-gray-800/80 rounded-2xl p-6 md:p-8 max-w-3xl mx-auto shadow-xl mb-12">
         
-        {/* Left Column: User Profile Card */}
-        <div className="bg-[#1c1c1c] border border-gray-800/80 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
-          <div>
-            <div className="flex items-center gap-3.5 mb-6">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-accent/20 to-[#009ca6]/20 border border-gray-700 flex items-center justify-center text-accent font-bold text-xl">
-                {user?.name ? user.name.charAt(0).toUpperCase() : <User className="w-6 h-6" />}
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-white">{user?.name || 'User'}</h2>
-                <p className="text-xs text-gray-400">@{user?.username || 'developer'}</p>
-              </div>
-            </div>
-
-            <div className="space-y-3 pt-4 border-t border-gray-800/60 text-sm">
-              <div className="flex items-center gap-3 text-gray-300">
-                <Mail className="w-4 h-4 text-gray-500 shrink-0" />
-                <span className="truncate">{user?.email || 'No email provided'}</span>
-              </div>
-              <div className="flex items-center gap-3 text-gray-300">
-                <Terminal className="w-4 h-4 text-gray-500 shrink-0" />
-                <span>DevHub v1.0.0 (Cloud Connected)</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-8 pt-4 border-t border-gray-800/60 flex items-center justify-between text-xs text-gray-500">
-            <span>Status: Online</span>
-            <span className="text-[#00ff0f]">Database Live</span>
-          </div>
+        <div className="flex rounded-xl bg-[#161616] border border-gray-800/80 p-1 mb-6">
+          <button
+            type="button"
+            onClick={() => { setSearchType('repositories'); setResults([]); setSearched(false); }}
+            className={`flex-1 py-2.5 rounded-lg text-xs md:text-sm font-medium transition ${
+              searchType === 'repositories' ? 'bg-[#262626] text-white border border-gray-700/60 shadow' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            Repositories
+          </button>
+          <button
+            type="button"
+            onClick={() => { setSearchType('users'); setResults([]); setSearched(false); }}
+            className={`flex-1 py-2.5 rounded-lg text-xs md:text-sm font-medium transition ${
+              searchType === 'users' ? 'bg-[#262626] text-white border border-gray-700/60 shadow' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            Users / Developers
+          </button>
         </div>
 
-        {/* Right Column: Quick Stat Cards & Navigation */}
-        <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-5">
-          <Link
-            to="/compare"
-            className="group bg-[#1c1c1c] border border-gray-800/80 hover:border-[#009ca6] transition duration-200 rounded-2xl p-6 shadow-xl flex flex-col justify-between"
+        <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={searchType === 'repositories' ? 'e.g. react, fastapi, tailwindcss' : 'e.g. torvalds, gaearon'}
+              className="w-full bg-[#161616] border border-gray-800 rounded-xl pl-10 pr-4 py-3.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-[#009ca6] transition"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="flex items-center justify-center gap-2 bg-[#1c1c1c] border border-[#009ca6] text-white font-medium px-6 py-3.5 rounded-xl hover:bg-[#00f0ff] hover:border-[#00f0ff] hover:text-black transition duration-200 shadow-lg text-sm disabled:opacity-50 shrink-0"
           >
-            <div>
-              <div className="p-3 bg-[#262626] border border-gray-700/60 rounded-xl w-fit mb-4 text-accent group-hover:text-[#00ff0f] transition">
-                <GitCompare className="w-6 h-6" />
-              </div>
-              <h3 className="text-lg font-bold text-white mb-1 group-hover:text-[#00ff0f] transition">Compare Repositories</h3>
-              <p className="text-xs text-gray-400">Analyze and compare GitHub repositories or developer accounts side-by-side.</p>
-            </div>
-            <div className="mt-6 flex items-center gap-1 text-xs font-medium text-accent group-hover:translate-x-1 transition">
-              <span>Launch tool</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </div>
-          </Link>
+            <span>{loading ? 'Searching...' : 'Search GitHub'}</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </form>
 
-          <Link
-            to="/"
-            className="group bg-[#1c1c1c] border border-gray-800/80 hover:border-[#009ca6] transition duration-200 rounded-2xl p-6 shadow-xl flex flex-col justify-between"
-          >
-            <div>
-              <div className="p-3 bg-[#262626] border border-gray-700/60 rounded-xl w-fit mb-4 text-accent group-hover:text-[#00ff0f] transition">
-                <Search className="w-6 h-6" />
-              </div>
-              <h3 className="text-lg font-bold text-white mb-1 group-hover:text-[#00ff0f] transition">Developer Search</h3>
-              <p className="text-xs text-gray-400">Discover top-tier open-source creators, codebases, and trending repositories.</p>
-            </div>
-            <div className="mt-6 flex items-center gap-1 text-xs font-medium text-accent group-hover:translate-x-1 transition">
-              <span>Start searching</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </div>
-          </Link>
-        </div>
-
+        {error && (
+          <div className="mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-medium">
+            {error}
+          </div>
+        )}
       </div>
 
-      {/* Saved Favorite Repositories Section */}
-      <div className="bg-[#1c1c1c] border border-gray-800/80 rounded-2xl p-6 shadow-xl mb-8">
-        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
-          <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" />
-          Saved Favorite Repositories ({favRepos.length})
-        </h3>
+      {/* Results Section */}
+      {searched && !loading && results.length === 0 && (
+        <div className="text-center text-gray-400 py-12">
+          <p className="text-sm">No results found for "{query}". Try another query.</p>
+        </div>
+      )}
 
-        {loading ? (
-          <div className="text-center py-6 text-gray-500 text-xs">Loading bookmarks from database...</div>
-        ) : favRepos.length === 0 ? (
-          <div className="text-center py-8 text-gray-500 text-xs italic">
-            No saved repositories yet. Search for a repository and bookmark it to save it here!
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {favRepos.map((repo) => (
-              <div key={repo.itemId} className="bg-[#161616] border border-gray-800/60 rounded-xl p-4 flex flex-col justify-between">
+      {results.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 max-w-6xl mx-auto">
+          {searchType === 'repositories' ? (
+            results.map((repo) => (
+              <div key={repo.id} className="bg-[#1c1c1c] border border-gray-800/80 rounded-2xl p-6 shadow-xl flex flex-col justify-between hover:border-gray-700 transition">
                 <div>
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <span className="font-bold text-white text-sm truncate">{repo.title}</span>
-                    <button 
-                      onClick={() => removeBookmark(repo.itemId)}
-                      className="text-gray-500 hover:text-red-400 transition p-1"
-                      title="Remove Bookmark"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <h3 className="text-base font-bold text-white truncate">
+                      <Link to={`/repository/${repo.owner.login}/${repo.name}`} className="hover:text-accent transition flex items-center gap-1.5">
+                        {repo.name}
+                      </Link>
+                    </h3>
                   </div>
-                  <p className="text-xs text-gray-400 line-clamp-2 mb-3">
+                  <p className="text-xs text-gray-400 line-clamp-2 mb-4">
                     {repo.description || 'No description provided.'}
                   </p>
                 </div>
-                <div className="flex items-center justify-between pt-3 border-t border-gray-800/60 text-xs">
-                  <span className="text-gray-500">@{repo.owner}</span>
-                  <a href={repo.url} target="_blank" rel="noreferrer" className="text-accent hover:underline font-medium flex items-center gap-1">
-                    View Link <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Saved Favorite Developers Section */}
-      <div className="bg-[#1c1c1c] border border-gray-800/80 rounded-2xl p-6 shadow-xl mb-8">
-        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
-          <User className="w-4 h-4 text-accent" />
-          Saved Favorite Developers ({favUsers.length})
-        </h3>
-
-        {loading ? (
-          <div className="text-center py-6 text-gray-500 text-xs">Loading bookmarks from database...</div>
-        ) : favUsers.length === 0 ? (
-          <div className="text-center py-8 text-gray-500 text-xs italic">
-            No saved developers yet. Search for a developer and click the star icon to save them here!
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {favUsers.map((dev) => (
-              <div key={dev.itemId} className="bg-[#161616] border border-gray-800/60 rounded-xl p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <img 
-                    src={dev.description && dev.description.startsWith('http') ? dev.description : "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"} 
-                    alt={dev.title} 
-                    className="w-10 h-10 rounded-xl border border-gray-700 object-cover" 
-                  />
-                  <div>
-                    <a href={dev.url} target="_blank" rel="noreferrer" className="font-bold text-white text-sm hover:text-accent transition truncate max-w-[120px] block">
-                      {dev.title}
-                    </a>
-                    <p className="text-[11px] text-gray-400 capitalize">Developer</p>
+                <div>
+                  <div className="flex items-center justify-between pt-4 border-t border-gray-800/60">
+                    <div className="flex items-center gap-3 text-xs text-gray-400">
+                      <span className="flex items-center gap-1"><Star className="w-3.5 h-3.5 text-yellow-400" /> {repo.stargazers_count.toLocaleString()}</span>
+                      <span className="flex items-center gap-1"><GitFork className="w-3.5 h-3.5 text-[#00ff0f]" /> {repo.forks_count.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {repo.language && <span className="text-xs text-accent font-medium">{repo.language}</span>}
+                      <Link
+                        to={`/repository/${repo.owner.login}/${repo.name}`}
+                        className="p-2.5 bg-[#262626] border border-gray-700/60 text-gray-300 hover:bg-[#00f0ff] hover:border-[#00f0ff] hover:text-black rounded-xl transition"
+                        title="View Repository Details"
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                      </Link>
+                      <a
+                        href={repo.html_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2.5 bg-[#262626] border border-gray-700/60 text-gray-300 hover:bg-[#00f0ff] hover:border-[#00f0ff] hover:text-black rounded-xl transition"
+                        title="Open on GitHub in New Tab"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <a href={dev.url} target="_blank" rel="noreferrer" className="p-2 bg-[#212121] border border-gray-700/60 text-gray-300 hover:text-accent rounded-lg transition" title="Open Profile">
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                  <button 
-                    onClick={() => removeBookmark(dev.itemId)}
-                    className="p-2 bg-[#212121] border border-gray-700/60 text-gray-500 hover:text-red-400 rounded-lg transition"
-                    title="Remove Bookmark"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            ))
+          ) : (
+            results.map((user) => {
+              const isFav = bookmarkedItemIds.has(String(user.id));
 
-      {/* Quick Analytics Overview */}
-      <div className="bg-[#1c1c1c] border border-gray-800/80 rounded-2xl p-6 shadow-xl">
-        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
-          <Code className="w-4 h-4 text-accent" />
-          Quick Analytics Overview
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-[#161616] border border-gray-800/60 rounded-xl p-4">
-            <p className="text-xs text-gray-400 mb-1">Total Saved Bookmarks</p>
-            <p className="text-2xl font-bold text-white">{bookmarks.length}</p>
-          </div>
-          <div className="bg-[#161616] border border-gray-800/60 rounded-xl p-4">
-            <p className="text-xs text-gray-400 mb-1">Database Sync</p>
-            <p className="text-2xl font-bold text-[#00ff0f]">Active</p>
-          </div>
-          <div className="bg-[#161616] border border-gray-800/60 rounded-xl p-4">
-            <p className="text-xs text-gray-400 mb-1">API Status</p>
-            <p className="text-2xl font-bold text-[#00ff0f]">Operational</p>
-          </div>
+              return (
+                <div key={user.id} className="bg-[#1c1c1c] border border-gray-800/80 rounded-2xl p-6 shadow-xl flex items-center justify-between hover:border-gray-700 transition">
+                  <div className="flex items-center gap-4">
+                    <img src={user.avatar_url} alt={user.login} className="w-12 h-12 rounded-xl border border-gray-700 object-cover" />
+                    <div>
+                      <h3 className="text-base font-bold text-white">
+                        <a href={user.html_url} target="_blank" rel="noreferrer" className="hover:text-accent transition flex items-center gap-1.5">
+                          {user.login}
+                          <ExternalLink className="w-3.5 h-3.5 text-gray-500" />
+                        </a>
+                      </h3>
+                      <p className="text-xs text-gray-400 capitalize">{user.type || 'Developer'}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => handleToggleBookmark(user, e)}
+                      className={`p-2.5 rounded-xl border transition duration-200 ${
+                        isFav 
+                          ? 'bg-[#1c1c1c] border-[#009ca6] text-[#00f0ff]' 
+                          : 'bg-[#1c1c1c] border-[#009ca6] text-gray-400 hover:bg-[#00f0ff] hover:border-[#00f0ff] hover:text-black'
+                      }`}
+                      title={isFav ? "Remove Bookmark" : "Save Favorite Developer"}
+                    >
+                      <Star className={`w-4 h-4 ${isFav ? 'fill-[#00f0ff]' : ''}`} />
+                    </button>
+                    <a
+                      href={user.html_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="p-2.5 bg-[#262626] border border-gray-700/60 text-gray-300 hover:bg-[#00f0ff] hover:border-[#00f0ff] hover:text-black rounded-xl transition"
+                    >
+                      <ArrowRight className="w-4 h-4" />
+                    </a>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
-      </div>
+      )}
 
     </div>
   );
