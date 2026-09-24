@@ -26,7 +26,7 @@ export default function RegisterPage() {
     setUsernameStatus('checking');
     const timer = setTimeout(async () => {
       try {
-        const response = await fetch(`http://localhost:5000/api/auth/check-username/${username.trim()}`);
+        const response = await fetch(`https://devhub-backend-lpen.onrender.com/api/auth/check-username/${username.trim()}`);
         const data = await response.json();
         if (response.ok) {
           setUsernameStatus(data.available ? 'available' : 'taken');
@@ -51,7 +51,7 @@ export default function RegisterPage() {
     setEmailStatus('checking');
     const timer = setTimeout(async () => {
       try {
-        const response = await fetch(`http://localhost:5000/api/auth/check-email?email=${encodeURIComponent(email.trim())}`);
+        const response = await fetch(`https://devhub-backend-lpen.onrender.com/api/auth/check-email?email=${encodeURIComponent(email.trim())}`);
         const data = await response.json();
         if (response.ok) {
           setEmailStatus(data.available ? 'available' : 'taken');
@@ -99,7 +99,7 @@ export default function RegisterPage() {
     setError('');
 
     try {
-      const response = await fetch('http://localhost:5000/api/auth/register', {
+      const response = await fetch('https://devhub-backend-lpen.onrender.com/api/auth/register', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
